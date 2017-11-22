@@ -1,18 +1,32 @@
 import numpy as np
 from scipy import optimize
 from sympy import *
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+
+x_values = []
+
+def list_to_array(x):
+    return np.array(x, dtype = np.float64).reshape(2, 1)
+
+def calculate_function_value(fx, xvars, xcurr):
+    return fx.subs(zip(xvars,xcurr))
 
 def find_dk(curr_fx, curr_hx, curr_gx, curr_grad_fx, curr_grad_hx, curr_grad_gx, H):
-    a = H[0][0]/2 + (H[1][1]*(curr_grad_hx[0]/curr_grad_hx[1])**2)/2 - (curr_grad_hx[0]/curr_grad_hx[1])*(H[0][1]+H[1][0])
-    b = -1*(curr_grad_fx[1]*curr_grad_hx[0])/curr_grad_hx[1] + (H[1][1]*curr_hx*curr_grad_hx[0])/(curr_grad_hx[1]**2) + curr_grad_fx[0] - (curr_hx/curr_grad_hx[1])*(H[0][1]+H[1][0])
-    c = -1*(curr_hx*curr_grad_fx[1])/curr_grad_hx[1] + (H[1][1]*(curr_hx)**2)/(curr_grad_hx[1]**2)
-    constraint_d1 = -1*(curr_gx*curr_grad_hx[1] - curr_hx*curr_grad_gx[1])/(curr_grad_gx[0]*curr_grad_hx[1] - curr_grad_gx[1]*curr_grad_hx[0])
-    global_min = (-1*b)/(2*a)
-    if(constraint_d1 > global_min):
-        dk = constraint_d1
-    else:
-        dk = global_min
-    return np.array([dk, (-curr_hx - curr_grad_hx[0]*dk)/curr_grad_hx[1]])
+    curr_grad_fx = list_to_array(curr_grad_fx)
+    curr_grad_gx = list_to_array(curr_grad_gx)
+    curr_grad_hx = list_to_array(curr_grad_hx)
+
+    new_hx = lambda d : curr_hx + np.matmul(np.transpose(curr_grad_hx), list_to_array(d))
+    new_gx = lambda d : curr_gx + np.matmul(np.transpose(curr_grad_gx), list_to_array(d))
+    objective = lambda d :  np.matmul(np.transpose(curr_grad_fx), list_to_array(d)) + (np.matmul(np.transpose(list_to_array(d)), np.matmul(H, list_to_array(d))))/2
+
+    constraints = ({'type': 'eq', 'fun': new_hx},
+                   {'type': 'ineq', 'fun': new_gx})
+
+    result = optimize.minimize(objective, [1.0, 1.0], constraints = constraints)
+    return result.x
 
 def find_lagrange_multipliers(curr_fx, curr_hx, curr_gx, curr_grad_fx, curr_grad_hx, curr_grad_gx, H, d):
     A = np.array( ( [ curr_grad_hx[0], curr_grad_gx[0] ], [ curr_grad_hx[1], curr_grad_gx[1]] ), dtype = np.float64)
@@ -35,8 +49,10 @@ def minimize_alpha_through_penalty_function(fx, hx, gx, mu_k, sigma_k, x_k_1, d_
     alpha = symbols('alpha')
     Px = fx + mu_k*abs(hx) - sigma_k*Min(0, gx)
     P_alpha = Px.subs([(x1,x_k_1[0]+alpha*d_k[0]), (x2,x_k_1[1]+alpha*d_k[1])])
-    call_P = lambda x: P_alpha.subs([('alpha',x)])
-    alpha_k = optimize.brent(call_P)
+    call_P = lambda alpha : P_alpha.subs([('alpha',alpha)])
+    constraints = ({'type': 'ineq', 'fun': lambda alpha: alpha},
+                   {'type': 'ineq', 'fun': lambda alpha: 1-alpha})
+    alpha_k = optimize.minimize(call_P, 0, constraints = constraints).x
     return alpha_k
 
 def calculate_y(grad_L, x_k, x_k_1):
@@ -65,7 +81,7 @@ def updateH(H, z, w):
     a2 = np.matmul(w, np.transpose(w)) / np.matmul(np.transpose(z), w)
     return H - a1 + a2
 
-def constrained_variable_metric_method(fx, hx, gx, x_0, H_0, xvars):
+def constrained_variable_metric_method(fx, hx, gx, x_0, H_0, xvars, no_of_iterations):
     d1, d2 = symbols('d1 d2')
     dvars = [d1, d2]
 
@@ -79,7 +95,7 @@ def constrained_variable_metric_method(fx, hx, gx, x_0, H_0, xvars):
     mu_k_1 = 0
     sigma_k_1 = 0
 
-    for k in range(1,5):
+    for k in range(1,no_of_iterations+1):
 
         xcurr = x_k_1
         H_k = H_k_1
@@ -114,13 +130,18 @@ def constrained_variable_metric_method(fx, hx, gx, x_0, H_0, xvars):
 
         H_k_1 = updateH(H_k, z, w)
 
-        print('Iteration: '+str(k)+'   '+str(x_k))
+        print('Iteration: '+str(k)+' '+str(x_k)+' '+str(calculate_function_value(fx, xvars, x_k)))
+        x_values.append(list(x_k))
 
         x_k_1 = x_k
         mu_k_1 = mu_k
         sigma_k_1 = sigma_k
 
-
+    print('***************************************')
+    print('Final x: '+str(x_k))
+    print('f(x): '+str(calculate_function_value(fx, xvars, x_k)))
+    print('***************************************')
+    return
 
 
 
@@ -128,24 +149,30 @@ def constrained_variable_metric_method(fx, hx, gx, x_0, H_0, xvars):
 x1, x2 = symbols('x1 x2')
 xvars = [x1, x2]
 
-fx = 6*x1*(x2**-1) + x2*(x1**-2)
-hx = x1*x2 - 2
-gx = x1 + x2 -1
+case = 1 # 1 or 2
 
-x_0 = np.array([2.0,1.0])
-H_0 = np.eye(2)
+if case == 1:
+    fx = 6*x1*(x2**-1) + x2*(x1**-2)
+    hx = x1*x2 - 2
+    gx = x1 + x2 -1
 
+    x_0 = np.array([2.0,1.0])
+    H_0 = np.eye(2)
 
-constrained_variable_metric_method(fx,hx,gx,x_0,H_0,xvars)
+    num_iterations = 27
+elif case == 2:
+    fx = 3*x1**2 - 4*x2
+    hx = 2*x1 + x2 -4
+    gx = 37 - x1**2 - x2**2
 
-# print('f(x): '+str(fx))
-# print('h(x): '+str(hx)+'=0')
-# print('g(x): '+str(gx)+'<=0')
+    x_0 = np.array([50,50])
+    H_0 = np.eye(2)
 
-# d_k = np.array([-4,2])
-#
-# x_k_1=np.array([2,1])
-#
-#
-#
-# x_k = np.array([1.46051, 1.26974])
+    num_iterations = 7
+
+constrained_variable_metric_method(fx,hx,gx,x_0,H_0,xvars,num_iterations)
+
+X_list1 = [i[0] for i in x_values]
+Y_list1 = [i[1] for i in x_values]
+print(X_list1)
+print(Y_list1)
